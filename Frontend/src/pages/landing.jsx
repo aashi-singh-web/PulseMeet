@@ -10,7 +10,7 @@ export default function LandingPage() {
         <div className='landingPageContainer'>
             <nav>
                 <div className='navHeader'>
-                    <h2>Apna Video Call</h2>
+                    <h2>PulseMeet Video Call</h2>
                 </div>
                 <div className='navlist'>
                     <p onClick={() => {
@@ -32,16 +32,17 @@ export default function LandingPage() {
 
             <div className="landingMainContainer">
                 <div>
-                    <h1><span style={{ color: "#FF9839" }}>Connect</span> with your loved Ones</h1>
+                    <h1><span style={{ color: "#FF9839" }}>Connect</span> with your Mentors here</h1>
 
                     <p>Interact now by PulseMeet</p>
                     <div role='button'>
                         <Link to={"/auth"}>Get Started</Link>
+                        {/* change dir for direction to other page */}
                     </div>
                 </div>
                 <div>
 
-                    <img src="/mobile.png" alt="" />
+                    <img src="/public/mobile.png" alt="" />
 
                 </div>
             </div>

@@ -1,5 +1,5 @@
 import httpStatus from "http-status";
-import { User } from "../models/user.model.js";
+import { User } from "../models/user.models.js";
 import bcrypt, { hash } from "bcrypt"
 
 import crypto from "crypto"

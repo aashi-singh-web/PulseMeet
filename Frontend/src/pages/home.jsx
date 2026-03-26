@@ -26,7 +26,7 @@ function HomeComponent() {
 
                 <div style={{ display: "flex", alignItems: "center" }}>
 
-                    <h2>PulseMeet</h2>
+                    <h2>Pulsemeet</h2>
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center" }}>
@@ -54,7 +54,7 @@ function HomeComponent() {
             <div className="meetContainer">
                 <div className="leftPanel">
                     <div>
-                        <h2>Providing Quality Connection Just Like Quality Education</h2>
+                        <h2>Providing Quality Video Call Just Like Quality Education</h2>
 
                         <div style={{ display: 'flex', gap: "10px" }}>
 
@@ -65,7 +65,7 @@ function HomeComponent() {
                     </div>
                 </div>
                 <div className='rightPanel'>
-                    <img srcSet='/public/logo3.png' alt="" />
+                    <img srcSet='/logo3.png' alt="" />
                 </div>
             </div>
         </>

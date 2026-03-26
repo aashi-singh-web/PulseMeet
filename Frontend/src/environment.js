@@ -1,6 +1,6 @@
 let IS_PROD = true;
 const server = IS_PROD ?
-    "https://pulsemeet-backend.onrender.com" :
+    "https://pulsemeet-backend-c9m0.onrender.com" :
 
     "http://localhost:8000"
 

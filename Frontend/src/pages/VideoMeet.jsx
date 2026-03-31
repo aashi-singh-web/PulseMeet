@@ -18,9 +18,21 @@ const server_url = server;
 
 var connections = {};
 
+const envTurnUrls = (process.env.REACT_APP_TURN_URLS || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
 const peerConfigConnections = {
-    "iceServers": [
-        { "urls": "stun:stun.l.google.com:19302" }
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        ...(envTurnUrls.length && process.env.REACT_APP_TURN_USERNAME && process.env.REACT_APP_TURN_CREDENTIAL
+            ? [{
+                urls: envTurnUrls,
+                username: process.env.REACT_APP_TURN_USERNAME,
+                credential: process.env.REACT_APP_TURN_CREDENTIAL
+            }]
+            : [])
     ]
 }
 

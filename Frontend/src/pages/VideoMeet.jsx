@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import io from "socket.io-client";
 import { Badge, IconButton, TextField } from '@mui/material';
 import { Button } from '@mui/material';
@@ -11,6 +11,7 @@ import MicOffIcon from '@mui/icons-material/MicOff'
 import ScreenShareIcon from '@mui/icons-material/ScreenShare';
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import ChatIcon from '@mui/icons-material/Chat'
+import { useParams } from 'react-router-dom';
 import server from '../environment';
 
 const server_url = server;
@@ -58,6 +59,14 @@ export default function VideoMeetComponent() {
 
     let [videos, setVideos] = useState([])
 
+    const { url: roomIdParam } = useParams();
+    const roomId = useMemo(() => {
+        // Keep room keys stable across devices (don’t include protocol/host)
+        return (roomIdParam || window.location.pathname || "").replace(/^\//, "");
+    }, [roomIdParam]);
+
+    const chatEndRef = useRef(null);
+
     // TODO
     // if(isChrome() === false) {
 
@@ -65,10 +74,8 @@ export default function VideoMeetComponent() {
     // }
 
     useEffect(() => {
-        console.log("HELLO")
         getPermissions();
-
-    })
+    }, [])
 
     let getDislayMedia = () => {
         if (screen) {
@@ -279,7 +286,7 @@ export default function VideoMeetComponent() {
         socketRef.current.on('signal', gotMessageFromServer)
 
         socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-call', window.location.href)
+            socketRef.current.emit('join-call', roomId)
             socketIdRef.current = socketRef.current.id
 
             socketRef.current.on('chat-message', addMessage)
@@ -408,17 +415,6 @@ export default function VideoMeetComponent() {
         window.location.href = "/"
     }
 
-    let openChat = () => {
-        setModal(true);
-        setNewMessages(0);
-    }
-    let closeChat = () => {
-        setModal(false);
-    }
-    let handleMessage = (e) => {
-        setMessage(e.target.value);
-    }
-
     const addMessage = (data, sender, socketIdSender) => {
         setMessages((prevMessages) => [
             ...prevMessages,
@@ -428,6 +424,11 @@ export default function VideoMeetComponent() {
             setNewMessages((prevNewMessages) => prevNewMessages + 1);
         }
     };
+
+    useEffect(() => {
+        // Keep chat scrolled to latest message
+        chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, [messages, showModal]);
 
 
 
@@ -486,6 +487,8 @@ export default function VideoMeetComponent() {
                                     )
                                 }) : <p>No Messages Yet</p>}
 
+                                <div ref={chatEndRef} />
+
 
                             </div>
 
@@ -527,7 +530,7 @@ export default function VideoMeetComponent() {
 
                     <div className={styles.conferenceView}>
                         {videos.map((video) => (
-                            <div key={video.socketId}>
+                            <div className={styles.conferenceTile} key={video.socketId}>
                                 <video
 
                                     data-socket={video.socketId}

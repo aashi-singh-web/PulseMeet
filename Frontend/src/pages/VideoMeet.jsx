@@ -67,6 +67,74 @@ export default function VideoMeetComponent() {
 
     const chatEndRef = useRef(null);
 
+    const upsertRemoteStream = (socketListId, stream) => {
+        if (!stream) return;
+        let videoExists = videoRef.current.find(v => v.socketId === socketListId);
+        if (videoExists) {
+            setVideos(prev => {
+                const updated = prev.map(v => v.socketId === socketListId ? { ...v, stream } : v);
+                videoRef.current = updated;
+                return updated;
+            });
+            return;
+        }
+        const newVideo = { socketId: socketListId, stream, autoplay: true, playsinline: true };
+        setVideos(prev => {
+            const updated = [...prev, newVideo];
+            videoRef.current = updated;
+            return updated;
+        });
+    };
+
+    const attachLocalStreamToPc = (pc) => {
+        if (!pc) return;
+        if (window.localStream === undefined || window.localStream === null) {
+            let blackSilence = (...args) => new MediaStream([black(...args), silence()]);
+            window.localStream = blackSilence();
+        }
+
+        // Prefer modern addTrack/ontrack, fall back to addStream
+        if (pc.addTrack && window.localStream.getTracks) {
+            const senders = pc.getSenders ? pc.getSenders() : [];
+            const existingTrackIds = new Set(senders.map(s => s.track?.id).filter(Boolean));
+            window.localStream.getTracks().forEach(track => {
+                if (!existingTrackIds.has(track.id)) {
+                    pc.addTrack(track, window.localStream);
+                }
+            });
+        } else if (pc.addStream) {
+            pc.addStream(window.localStream);
+        }
+    };
+
+    const ensurePeerConnection = (socketListId) => {
+        if (!socketListId || socketListId === socketIdRef.current) return null;
+        if (connections[socketListId]) return connections[socketListId];
+
+        const pc = new RTCPeerConnection(peerConfigConnections);
+        connections[socketListId] = pc;
+
+        pc.onicecandidate = function (event) {
+            if (event.candidate != null) {
+                socketRef.current.emit('signal', socketListId, JSON.stringify({ 'ice': event.candidate }));
+            }
+        };
+
+        // Remote media (modern)
+        pc.ontrack = (event) => {
+            const stream = event.streams?.[0];
+            upsertRemoteStream(socketListId, stream);
+        };
+
+        // Remote media (legacy fallback)
+        pc.onaddstream = (event) => {
+            upsertRemoteStream(socketListId, event.stream);
+        };
+
+        attachLocalStreamToPc(pc);
+        return pc;
+    };
+
     // TODO
     // if(isChrome() === false) {
 
@@ -259,12 +327,14 @@ export default function VideoMeetComponent() {
         var signal = JSON.parse(message)
 
         if (fromId !== socketIdRef.current) {
+            const pc = ensurePeerConnection(fromId);
+            if (!pc) return;
             if (signal.sdp) {
-                connections[fromId].setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+                pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
                     if (signal.sdp.type === 'offer') {
-                        connections[fromId].createAnswer().then((description) => {
-                            connections[fromId].setLocalDescription(description).then(() => {
-                                socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': connections[fromId].localDescription }))
+                        pc.createAnswer().then((description) => {
+                            pc.setLocalDescription(description).then(() => {
+                                socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': pc.localDescription }))
                             }).catch(e => console.log(e))
                         }).catch(e => console.log(e))
                     }
@@ -272,7 +342,7 @@ export default function VideoMeetComponent() {
             }
 
             if (signal.ice) {
-                connections[fromId].addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
+                pc.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
             }
         }
     }
@@ -293,64 +363,15 @@ export default function VideoMeetComponent() {
 
             socketRef.current.on('user-left', (id) => {
                 setVideos((videos) => videos.filter((video) => video.socketId !== id))
+                try {
+                    connections[id]?.close?.();
+                } catch (e) { }
+                delete connections[id];
             })
 
             socketRef.current.on('user-joined', (id, clients) => {
                 clients.forEach((socketListId) => {
-
-                    connections[socketListId] = new RTCPeerConnection(peerConfigConnections)
-                    // Wait for their ice candidate       
-                    connections[socketListId].onicecandidate = function (event) {
-                        if (event.candidate != null) {
-                            socketRef.current.emit('signal', socketListId, JSON.stringify({ 'ice': event.candidate }))
-                        }
-                    }
-
-                    // Wait for their video stream
-                    connections[socketListId].onaddstream = (event) => {
-                        console.log("BEFORE:", videoRef.current);
-                        console.log("FINDING ID: ", socketListId);
-
-                        let videoExists = videoRef.current.find(video => video.socketId === socketListId);
-
-                        if (videoExists) {
-                            console.log("FOUND EXISTING");
-
-                            // Update the stream of the existing video
-                            setVideos(videos => {
-                                const updatedVideos = videos.map(video =>
-                                    video.socketId === socketListId ? { ...video, stream: event.stream } : video
-                                );
-                                videoRef.current = updatedVideos;
-                                return updatedVideos;
-                            });
-                        } else {
-                            // Create a new video
-                            console.log("CREATING NEW");
-                            let newVideo = {
-                                socketId: socketListId,
-                                stream: event.stream,
-                                autoplay: true,
-                                playsinline: true
-                            };
-
-                            setVideos(videos => {
-                                const updatedVideos = [...videos, newVideo];
-                                videoRef.current = updatedVideos;
-                                return updatedVideos;
-                            });
-                        }
-                    };
-
-
-                    // Add the local video stream
-                    if (window.localStream !== undefined && window.localStream !== null) {
-                        connections[socketListId].addStream(window.localStream)
-                    } else {
-                        let blackSilence = (...args) => new MediaStream([black(...args), silence()])
-                        window.localStream = blackSilence()
-                        connections[socketListId].addStream(window.localStream)
-                    }
+                    ensurePeerConnection(socketListId);
                 })
 
                 if (id === socketIdRef.current) {
@@ -358,7 +379,7 @@ export default function VideoMeetComponent() {
                         if (id2 === socketIdRef.current) continue
 
                         try {
-                            connections[id2].addStream(window.localStream)
+                            attachLocalStreamToPc(connections[id2]);
                         } catch (e) { }
 
                         connections[id2].createOffer().then((description) => {

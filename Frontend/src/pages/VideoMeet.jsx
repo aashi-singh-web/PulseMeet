@@ -90,7 +90,7 @@ export default function VideoMeetComponent() {
             });
             return;
         }
-        const newVideo = { socketId: socketListId, stream, autoplay: true, playsinline: true };
+        const newVideo = { socketId: socketListId, stream };
         setVideos(prev => {
             const updated = [...prev, newVideo];
             videoRef.current = updated;
@@ -494,7 +494,13 @@ export default function VideoMeetComponent() {
 
 
                     <div>
-                        <video ref={localVideoref} autoPlay muted></video>
+                        <video
+                            ref={localVideoref}
+                            autoPlay
+                            muted
+                            playsInline
+                            onLoadedMetadata={(e) => e.currentTarget.play?.().catch(() => { })}
+                        ></video>
                     </div>
 
                 </div> :
@@ -559,7 +565,14 @@ export default function VideoMeetComponent() {
                     </div>
 
 
-                    <video className={styles.meetUserVideo} ref={localVideoref} autoPlay muted></video>
+                    <video
+                        className={styles.meetUserVideo}
+                        ref={localVideoref}
+                        autoPlay
+                        muted
+                        playsInline
+                        onLoadedMetadata={(e) => e.currentTarget.play?.().catch(() => { })}
+                    ></video>
 
                     <div className={styles.conferenceView}>
                         {videos.map((video) => (
@@ -570,9 +583,12 @@ export default function VideoMeetComponent() {
                                     ref={ref => {
                                         if (ref && video.stream) {
                                             ref.srcObject = video.stream;
+                                            ref.play?.().catch(() => { });
                                         }
                                     }}
                                     autoPlay
+                                    playsInline
+                                    onLoadedMetadata={(e) => e.currentTarget.play?.().catch(() => { })}
                                 >
                                 </video>
                             </div>

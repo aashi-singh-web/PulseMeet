@@ -165,6 +165,21 @@ export default function VideoMeetComponent() {
             video: stream.getVideoTracks?.()[0] || null,
         };
 
+        // Best path: use transceivers we created (audio first, then video)
+        const transceivers = pc.getTransceivers?.() || [];
+        if (transceivers.length) {
+            for (const t of transceivers) {
+                const kind = t?.receiver?.track?.kind || t?.sender?.track?.kind;
+                if (kind !== "audio" && kind !== "video") continue;
+                const track = tracksByKind[kind];
+                if (t.sender?.replaceTrack) {
+                    await t.sender.replaceTrack(track);
+                }
+            }
+            return;
+        }
+
+        // Fallback: match by existing sender track kind (older implementations)
         const senders = pc.getSenders ? pc.getSenders() : [];
         const senderByKind = {};
         senders.forEach(s => {
@@ -177,7 +192,6 @@ export default function VideoMeetComponent() {
             if (sender?.replaceTrack) {
                 await sender.replaceTrack(track);
             } else if (track && pc.addTrack) {
-                // Fallback for very old implementations
                 pc.addTrack(track, stream);
             }
         }

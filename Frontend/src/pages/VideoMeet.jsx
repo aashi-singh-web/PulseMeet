@@ -18,7 +18,7 @@ const server_url = server;
 
 var connections = {};
 
-const envTurnUrls = (
+const rawTurnUrls = (
     process.env.REACT_APP_TURN_URLS ||
     process.env.REACT_APP_TURN_URL ||
     ""
@@ -27,12 +27,40 @@ const envTurnUrls = (
     .map(s => s.trim())
     .filter(Boolean);
 
+const envTurnUrls = (() => {
+    // If user provides one TURN url like `turn:xxx:3478`, auto-add safe HTTPS-friendly fallbacks.
+    if (rawTurnUrls.length !== 1) return rawTurnUrls;
+    const single = rawTurnUrls[0];
+    try {
+        // Extract host from `turn:` / `turns:` urls.
+        // Examples:
+        // - turn:example.com:3478
+        // - turns:example.com:5349
+        const withoutProto = single.replace(/^turns?:/i, "");
+        const host = withoutProto.split("?")[0].split(":")[0];
+        if (!host) return rawTurnUrls;
+        const fallbacks = [
+            single,
+            `turn:${host}:80?transport=tcp`,
+            `turn:${host}:443?transport=tcp`,
+            `turns:${host}:443?transport=tcp`,
+        ];
+        return Array.from(new Set(fallbacks));
+    } catch (e) {
+        return rawTurnUrls;
+    }
+})();
+
 const envTurnUsername = process.env.REACT_APP_TURN_USERNAME;
 const envTurnCredential =
     process.env.REACT_APP_TURN_CREDENTIAL ||
     process.env.REACT_APP_TURN_PASSWORD;
 
 const peerConfigConnections = {
+    iceCandidatePoolSize: 10,
+    ...(envTurnUrls.length && envTurnUsername && envTurnCredential && process.env.NODE_ENV === "production"
+        ? { iceTransportPolicy: "relay" }
+        : {}),
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         ...(envTurnUrls.length && envTurnUsername && envTurnCredential
@@ -134,6 +162,13 @@ export default function VideoMeetComponent() {
 
         const pc = new RTCPeerConnection(peerConfigConnections);
         connections[socketListId] = pc;
+
+        pc.oniceconnectionstatechange = () => {
+            console.log("[webrtc] iceConnectionState", socketListId, pc.iceConnectionState);
+        };
+        pc.onconnectionstatechange = () => {
+            console.log("[webrtc] connectionState", socketListId, pc.connectionState);
+        };
 
         pc.onicecandidate = function (event) {
             if (event.candidate != null) {

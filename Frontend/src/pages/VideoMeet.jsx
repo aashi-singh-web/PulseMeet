@@ -18,19 +18,28 @@ const server_url = server;
 
 var connections = {};
 
-const envTurnUrls = (process.env.REACT_APP_TURN_URLS || "")
+const envTurnUrls = (
+    process.env.REACT_APP_TURN_URLS ||
+    process.env.REACT_APP_TURN_URL ||
+    ""
+)
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
 
+const envTurnUsername = process.env.REACT_APP_TURN_USERNAME;
+const envTurnCredential =
+    process.env.REACT_APP_TURN_CREDENTIAL ||
+    process.env.REACT_APP_TURN_PASSWORD;
+
 const peerConfigConnections = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        ...(envTurnUrls.length && process.env.REACT_APP_TURN_USERNAME && process.env.REACT_APP_TURN_CREDENTIAL
+        ...(envTurnUrls.length && envTurnUsername && envTurnCredential
             ? [{
                 urls: envTurnUrls,
-                username: process.env.REACT_APP_TURN_USERNAME,
-                credential: process.env.REACT_APP_TURN_CREDENTIAL
+                username: envTurnUsername,
+                credential: envTurnCredential
             }]
             : [])
     ]
@@ -363,7 +372,10 @@ export default function VideoMeetComponent() {
 
 
     let connectToSocketServer = () => {
-        socketRef.current = io.connect(server_url, { secure: false })
+        // Let socket.io pick ws/wss correctly based on URL
+        socketRef.current = io(server_url, {
+            transports: ["websocket", "polling"],
+        })
 
         socketRef.current.on('signal', gotMessageFromServer)
 

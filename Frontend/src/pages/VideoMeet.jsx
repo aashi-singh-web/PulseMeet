@@ -115,6 +115,21 @@ export default function VideoMeetComponent() {
     }, [roomIdParam]);
 
     const chatEndRef = useRef(null);
+    const remoteStreamsRef = useRef(new Map());
+
+    const upsertRemoteTrack = (socketListId, track) => {
+        if (!socketListId || !track) return;
+        let stream = remoteStreamsRef.current.get(socketListId);
+        if (!stream) {
+            stream = new MediaStream();
+            remoteStreamsRef.current.set(socketListId, stream);
+        }
+        const alreadyHas = stream.getTracks().some(t => t.id === track.id);
+        if (!alreadyHas) {
+            stream.addTrack(track);
+        }
+        upsertRemoteStream(socketListId, stream);
+    };
 
     const upsertRemoteStream = (socketListId, stream) => {
         if (!stream) return;
@@ -234,8 +249,12 @@ export default function VideoMeetComponent() {
 
         // Remote media (modern)
         pc.ontrack = (event) => {
-            const stream = event.streams?.[0];
-            upsertRemoteStream(socketListId, stream);
+            // In modern WebRTC, `event.streams` can be empty; build a stream from tracks.
+            if (event.streams && event.streams[0]) {
+                upsertRemoteStream(socketListId, event.streams[0]);
+                return;
+            }
+            upsertRemoteTrack(socketListId, event.track);
         };
 
         // Remote media (legacy fallback)
@@ -483,6 +502,7 @@ export default function VideoMeetComponent() {
                     connections[id]?.close?.();
                 } catch (e) { }
                 delete connections[id];
+                remoteStreamsRef.current.delete(id);
             })
 
             socketRef.current.on('user-joined', (id, clients) => {

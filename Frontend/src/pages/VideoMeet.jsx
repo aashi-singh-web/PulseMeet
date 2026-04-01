@@ -379,27 +379,53 @@ export default function VideoMeetComponent() {
         })
     }
 
-    let gotMessageFromServer = (fromId, message) => {
-        var signal = JSON.parse(message)
+    let gotMessageFromServer = async (fromId, message) => {
+        const signal = JSON.parse(message)
 
-        if (fromId !== socketIdRef.current) {
-            const pc = ensurePeerConnection(fromId);
-            if (!pc) return;
+        if (fromId === socketIdRef.current) return;
+
+        const pc = ensurePeerConnection(fromId);
+        if (!pc) return;
+
+        try {
             if (signal.sdp) {
-                pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-                    if (signal.sdp.type === 'offer') {
-                        pc.createAnswer().then((description) => {
-                            pc.setLocalDescription(description).then(() => {
-                                socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': pc.localDescription }))
-                            }).catch(e => console.log(e))
-                        }).catch(e => console.log(e))
+                const desc = new RTCSessionDescription(signal.sdp);
+
+                // Glare handling: if we get an offer while not stable, rollback local offer first.
+                if (desc.type === "offer" && pc.signalingState !== "stable") {
+                    try {
+                        await pc.setLocalDescription({ type: "rollback" });
+                    } catch (e) {
+                        // If rollback isn't supported, ignore this offer to avoid "wrong state" errors.
+                        console.log("[webrtc] rollback failed, ignoring offer", fromId, pc.signalingState, e);
+                        return;
                     }
-                }).catch(e => console.log(e))
+                }
+
+                // If we get an answer but we never made an offer, ignore.
+                if (desc.type === "answer" && pc.signalingState === "stable") {
+                    console.log("[webrtc] ignoring unexpected answer (stable)", fromId);
+                    return;
+                }
+
+                await pc.setRemoteDescription(desc);
+
+                if (desc.type === 'offer') {
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': pc.localDescription }))
+                }
             }
 
             if (signal.ice) {
-                pc.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(signal.ice));
+                } catch (e) {
+                    console.log("[webrtc] addIceCandidate failed", fromId, e);
+                }
             }
+        } catch (e) {
+            console.log("[webrtc] signal handling failed", fromId, e);
         }
     }
 

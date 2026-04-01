@@ -135,24 +135,64 @@ export default function VideoMeetComponent() {
         });
     };
 
-    const attachLocalStreamToPc = (pc) => {
-        if (!pc) return;
+    const ensureLocalStream = () => {
         if (window.localStream === undefined || window.localStream === null) {
             let blackSilence = (...args) => new MediaStream([black(...args), silence()]);
             window.localStream = blackSilence();
         }
+        return window.localStream;
+    };
 
-        // Prefer modern addTrack/ontrack, fall back to addStream
-        if (pc.addTrack && window.localStream.getTracks) {
-            const senders = pc.getSenders ? pc.getSenders() : [];
-            const existingTrackIds = new Set(senders.map(s => s.track?.id).filter(Boolean));
-            window.localStream.getTracks().forEach(track => {
-                if (!existingTrackIds.has(track.id)) {
-                    pc.addTrack(track, window.localStream);
-                }
-            });
-        } else if (pc.addStream) {
-            pc.addStream(window.localStream);
+    const ensureTransceivers = (pc) => {
+        if (!pc || pc.__pmTransceiversReady) return;
+        // Fixed m-line order: audio first, then video
+        try {
+            pc.addTransceiver("audio", { direction: "sendrecv" });
+            pc.addTransceiver("video", { direction: "sendrecv" });
+        } catch (e) {
+            // Older browsers may not support addTransceiver; we'll fallback later.
+        }
+        pc.__pmTransceiversReady = true;
+    };
+
+    const syncSendersWithLocalStream = async (pc) => {
+        if (!pc) return;
+        const stream = ensureLocalStream();
+
+        // Prefer replaceTrack to avoid changing SDP m-line order
+        const tracksByKind = {
+            audio: stream.getAudioTracks?.()[0] || null,
+            video: stream.getVideoTracks?.()[0] || null,
+        };
+
+        const senders = pc.getSenders ? pc.getSenders() : [];
+        const senderByKind = {};
+        senders.forEach(s => {
+            if (s.track?.kind) senderByKind[s.track.kind] = s;
+        });
+
+        for (const kind of ["audio", "video"]) {
+            const track = tracksByKind[kind];
+            const sender = senderByKind[kind];
+            if (sender?.replaceTrack) {
+                await sender.replaceTrack(track);
+            } else if (track && pc.addTrack) {
+                // Fallback for very old implementations
+                pc.addTrack(track, stream);
+            }
+        }
+    };
+
+    const renegotiate = async (toId) => {
+        const pc = connections[toId];
+        if (!pc) return;
+        try {
+            if (pc.signalingState !== "stable") return;
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socketRef.current.emit('signal', toId, JSON.stringify({ 'sdp': pc.localDescription }));
+        } catch (e) {
+            console.log("[webrtc] renegotiate failed", toId, e);
         }
     };
 
@@ -162,6 +202,8 @@ export default function VideoMeetComponent() {
 
         const pc = new RTCPeerConnection(peerConfigConnections);
         connections[socketListId] = pc;
+
+        ensureTransceivers(pc);
 
         pc.oniceconnectionstatechange = () => {
             console.log("[webrtc] iceConnectionState", socketListId, pc.iceConnectionState);
@@ -187,7 +229,8 @@ export default function VideoMeetComponent() {
             upsertRemoteStream(socketListId, event.stream);
         };
 
-        attachLocalStreamToPc(pc);
+        // Attach local tracks in a stable order
+        syncSendersWithLocalStream(pc).catch(() => { });
         return pc;
     };
 
@@ -281,17 +324,7 @@ export default function VideoMeetComponent() {
 
         for (let id in connections) {
             if (id === socketIdRef.current) continue
-
-            connections[id].addStream(window.localStream)
-
-            connections[id].createOffer().then((description) => {
-                console.log(description)
-                connections[id].setLocalDescription(description)
-                    .then(() => {
-                        socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': connections[id].localDescription }))
-                    })
-                    .catch(e => console.log(e))
-            })
+            syncSendersWithLocalStream(connections[id]).then(() => renegotiate(id));
         }
 
         stream.getTracks().forEach(track => track.onended = () => {
@@ -308,15 +341,8 @@ export default function VideoMeetComponent() {
             localVideoref.current.srcObject = window.localStream
 
             for (let id in connections) {
-                connections[id].addStream(window.localStream)
-
-                connections[id].createOffer().then((description) => {
-                    connections[id].setLocalDescription(description)
-                        .then(() => {
-                            socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': connections[id].localDescription }))
-                        })
-                        .catch(e => console.log(e))
-                })
+                if (id === socketIdRef.current) continue
+                syncSendersWithLocalStream(connections[id]).then(() => renegotiate(id));
             }
         })
     }
@@ -350,16 +376,7 @@ export default function VideoMeetComponent() {
 
         for (let id in connections) {
             if (id === socketIdRef.current) continue
-
-            connections[id].addStream(window.localStream)
-
-            connections[id].createOffer().then((description) => {
-                connections[id].setLocalDescription(description)
-                    .then(() => {
-                        socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': connections[id].localDescription }))
-                    })
-                    .catch(e => console.log(e))
-            })
+            syncSendersWithLocalStream(connections[id]).then(() => renegotiate(id));
         }
 
         stream.getTracks().forEach(track => track.onended = () => {
@@ -463,17 +480,7 @@ export default function VideoMeetComponent() {
                     for (let id2 in connections) {
                         if (id2 === socketIdRef.current) continue
 
-                        try {
-                            attachLocalStreamToPc(connections[id2]);
-                        } catch (e) { }
-
-                        connections[id2].createOffer().then((description) => {
-                            connections[id2].setLocalDescription(description)
-                                .then(() => {
-                                    socketRef.current.emit('signal', id2, JSON.stringify({ 'sdp': connections[id2].localDescription }))
-                                })
-                                .catch(e => console.log(e))
-                        })
+                        syncSendersWithLocalStream(connections[id2]).then(() => renegotiate(id2));
                     }
                 }
             })

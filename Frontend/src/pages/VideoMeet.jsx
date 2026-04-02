@@ -119,6 +119,7 @@ export default function VideoMeetComponent() {
 
     const upsertRemoteTrack = (socketListId, track) => {
         if (!socketListId || !track) return;
+        console.log("[webrtc] ontrack track", socketListId, track.kind, track.id);
         let stream = remoteStreamsRef.current.get(socketListId);
         if (!stream) {
             stream = new MediaStream();
@@ -133,6 +134,11 @@ export default function VideoMeetComponent() {
 
     const upsertRemoteStream = (socketListId, stream) => {
         if (!stream) return;
+        try {
+            const v = stream.getVideoTracks?.().length || 0;
+            const a = stream.getAudioTracks?.().length || 0;
+            console.log("[webrtc] upsertRemoteStream", socketListId, "tracks", { audio: a, video: v });
+        } catch (e) { }
         let videoExists = videoRef.current.find(v => v.socketId === socketListId);
         if (videoExists) {
             setVideos(prev => {
@@ -158,16 +164,25 @@ export default function VideoMeetComponent() {
         return window.localStream;
     };
 
-    const ensureTransceivers = (pc) => {
-        if (!pc || pc.__pmTransceiversReady) return;
-        // Fixed m-line order: audio first, then video
-        try {
-            pc.addTransceiver("audio", { direction: "sendrecv" });
-            pc.addTransceiver("video", { direction: "sendrecv" });
-        } catch (e) {
-            // Older browsers may not support addTransceiver; we'll fallback later.
+    const attachInitialTracks = (pc) => {
+        if (!pc || pc.__pmTracksReady) return;
+        const stream = ensureLocalStream();
+        const audioTrack = stream.getAudioTracks?.()[0] || null;
+        const videoTrack = stream.getVideoTracks?.()[0] || null;
+
+        // Fixed sender order: audio first, then video.
+        const senders = pc.getSenders ? pc.getSenders() : [];
+        const hasAudio = senders.some(s => s.track?.kind === "audio");
+        const hasVideo = senders.some(s => s.track?.kind === "video");
+
+        if (!hasAudio && audioTrack && pc.addTrack) {
+            pc.addTrack(audioTrack, stream);
         }
-        pc.__pmTransceiversReady = true;
+        if (!hasVideo && videoTrack && pc.addTrack) {
+            pc.addTrack(videoTrack, stream);
+        }
+
+        pc.__pmTracksReady = true;
     };
 
     const syncSendersWithLocalStream = async (pc) => {
@@ -180,21 +195,6 @@ export default function VideoMeetComponent() {
             video: stream.getVideoTracks?.()[0] || null,
         };
 
-        // Best path: use transceivers we created (audio first, then video)
-        const transceivers = pc.getTransceivers?.() || [];
-        if (transceivers.length) {
-            for (const t of transceivers) {
-                const kind = t?.receiver?.track?.kind || t?.sender?.track?.kind;
-                if (kind !== "audio" && kind !== "video") continue;
-                const track = tracksByKind[kind];
-                if (t.sender?.replaceTrack) {
-                    await t.sender.replaceTrack(track);
-                }
-            }
-            return;
-        }
-
-        // Fallback: match by existing sender track kind (older implementations)
         const senders = pc.getSenders ? pc.getSenders() : [];
         const senderByKind = {};
         senders.forEach(s => {
@@ -205,9 +205,10 @@ export default function VideoMeetComponent() {
             const track = tracksByKind[kind];
             const sender = senderByKind[kind];
             if (sender?.replaceTrack) {
-                await sender.replaceTrack(track);
-            } else if (track && pc.addTrack) {
-                pc.addTrack(track, stream);
+                if (track) {
+                    console.log("[webrtc] replaceTrack", kind, "->", track.id);
+                    await sender.replaceTrack(track);
+                }
             }
         }
     };
@@ -232,7 +233,8 @@ export default function VideoMeetComponent() {
         const pc = new RTCPeerConnection(peerConfigConnections);
         connections[socketListId] = pc;
 
-        ensureTransceivers(pc);
+        // Add stable dummy tracks immediately, so sender kinds exist for replaceTrack later.
+        attachInitialTracks(pc);
 
         pc.oniceconnectionstatechange = () => {
             console.log("[webrtc] iceConnectionState", socketListId, pc.iceConnectionState);
@@ -533,7 +535,8 @@ export default function VideoMeetComponent() {
         let canvas = Object.assign(document.createElement("canvas"), { width, height })
         canvas.getContext('2d').fillRect(0, 0, width, height)
         let stream = canvas.captureStream()
-        return Object.assign(stream.getVideoTracks()[0], { enabled: false })
+        // Keep enabled so the initial SDP m-line has an actual video track.
+        return Object.assign(stream.getVideoTracks()[0], { enabled: true })
     }
 
     let handleVideo = () => {
